@@ -18,21 +18,27 @@
         <link rel="alternate" type="text/html" href="https://novacrazy.github.io/2026-09-19-comp-in-core/"/>
         <id>https://novacrazy.github.io/2026-09-19-comp-in-core/</id>
         
-        <content type="html" xml:base="https://novacrazy.github.io/2026-09-19-comp-in-core/">&lt;p&gt;Prior to recent changes, Thermite core (&lt;code&gt;thermite&lt;/code&gt;) didn&#39;t expose raw compensated
-arithmetic primitives like &lt;code&gt;two_sum&lt;/code&gt; and &lt;code&gt;two_prod&lt;/code&gt;. &lt;code&gt;thermite-compensated&lt;/code&gt; had them,
-as a separate crate, but it turns out that it&#39;s pretty useful to keep the basic compensated ops around at a very low level.&lt;/p&gt;
+        <content type="html" xml:base="https://novacrazy.github.io/2026-09-19-comp-in-core/">&lt;div class=&quot;olivine-admonish&quot;&gt;
+TL;DR: Opting into algebraic optimizations for scalars silently broke
+a significant portion of Thermite&#39;s math library. Here&#39;s how I fixed it.
+&lt;/div&gt;
+&lt;p&gt;Recent changes have exposed the raw compensated arithmetic primitives like &lt;code&gt;two_sum&lt;/code&gt; and &lt;code&gt;two_prod&lt;/code&gt; in Thermite core, whereas they were previously only in the &lt;a rel=&quot;noopener external&quot; target=&quot;_blank&quot; href=&quot;https://raygon-renderer.github.io/thermite/thermite_compensated/index.html&quot;&gt;&lt;code&gt;thermite-compensated&lt;/code&gt;&lt;/a&gt; crate. Why? Turns out it&#39;s pretty essential to keep the basic compensated ops around at the very low level.&lt;/p&gt;
 &lt;h2 id=&quot;what-is-compensated-arithmetic&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#what-is-compensated-arithmetic&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
 What is Compensated Arithmetic?&lt;/h2&gt;
-&lt;p&gt;Compensated arithmetic, more formally known as Error-Free Transforms,
-is a way of recovering the error lost by rounding when applying basic
+&lt;p&gt;Compensated arithmetic primitives, more formally known as Error-Free Transforms,
+are a way of recovering the error lost by rounding when applying basic
 operators such as addition, subtraction, multiplication, and division.
 Almost everything else falls out from that.&lt;/p&gt;
-&lt;p&gt;&lt;code&gt;a + b&lt;/code&gt; in an &lt;code&gt;f64&lt;/code&gt; isn&#39;t &lt;code&gt;a + b&lt;/code&gt;. The exact sum can need up to twice the mantissa bits to
-write down, so the hardware rounds it to the nearest representable value and drops the rest.
+&lt;p&gt;&lt;code&gt;a + b&lt;/code&gt; in an &lt;code&gt;f64&lt;/code&gt; isn&#39;t &lt;code&gt;a + b&lt;/code&gt;. The exact sum can need far more bits than the mantissa
+has (&lt;code&gt;1e300 + 1e-300&lt;/code&gt; would take about two thousand), so the hardware rounds it to the nearest representable value and drops the rest.
 What gets dropped is the interesting part, because for addition it&#39;s always exactly
 representable in the same format. Knuth&#39;s 2Sum recovers it in six adds, no branches, no
 extra precision.&lt;/p&gt;
-&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;math&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;s = \mathrm{fl}(a + b), \qquad e = (a + b) - s, \qquad s + e = a + b&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;math&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;\begin{aligned}&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;s &amp;amp;= \mathrm{fl}(a + b) \\&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;e &amp;amp;= (a + b) - s \\&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;s + e &amp;amp;= a + b&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;\end{aligned}&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;&lt;code&gt;$s$&lt;/code&gt; is the result you would have gotten anyway, and &lt;code&gt;$e$&lt;/code&gt; is exactly what the rounding
 lost, so the pair &lt;code&gt;$(s, e)$&lt;/code&gt; holds the exact sum in two words. Nothing is lost, the
 value is just re-encoded across two floats.&lt;/p&gt;
@@ -57,11 +63,7 @@ threshold (&lt;code&gt;$2^{115}$&lt;/code&gt; for &lt;code&gt;f32&lt;/code&gt;) 
 be split at all.&lt;/p&gt;
 &lt;h2 id=&quot;algebraic-scalar&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#algebraic-scalar&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
 &lt;code&gt;algebraic_scalar&lt;/code&gt;&lt;/h2&gt;
-&lt;p&gt;Thermite has the &lt;code&gt;algebraic_scalar&lt;/code&gt; Cargo feature to enable the &quot;Algebraic&quot; float ops,
-which allow LLVM to casually reassociate operations to improve performance or improve
-autovectorization opportunities. This is honestly great for most scalar code. If you
-are not or cannot use SIMD for one reason or another, making the scalar fallbacks as fast
-as possible is ideal.&lt;/p&gt;
+&lt;p&gt;Thermite has the &lt;span class=&quot;kw&quot;&gt;&lt;code&gt;algebraic_scalar&lt;/code&gt;&lt;/span&gt; Cargo feature to enable the &quot;Algebraic&quot; float ops (&lt;code&gt;algebraic_*&lt;/code&gt; on &lt;code&gt;f32&lt;/code&gt;/&lt;code&gt;f64&lt;/code&gt;), which allow LLVM to casually reassociate operations to improve performance or improve autovectorization opportunities. With this feature enabled, all basic operations (&lt;code&gt;+&lt;/code&gt;,&lt;code&gt;-&lt;/code&gt;,&lt;code&gt;*&lt;/code&gt;,&lt;code&gt;/&lt;/code&gt;) are set to algebraic ops at the lowest library level, so everything inherits those everywhere. This is honestly great for most scalar code. If you are not using or cannot use SIMD for one reason or another, making the scalar fallbacks as fast as possible is ideal.&lt;/p&gt;
 &lt;p&gt;Summation with a division in it is the clearest example:&lt;/p&gt;
 &lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;//&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; NOTE: &amp;quot;Scalars&amp;quot; in Thermite are still wrapped in `Vector`&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;let&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; mut&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; sum&lt;/span&gt;&lt;span&gt;:&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; Vector&lt;/span&gt;&lt;span&gt;&amp;lt;&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;f64&lt;/span&gt;&lt;span&gt;&amp;gt;&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; Vector&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;splat&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;0&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
@@ -75,13 +77,14 @@ like this:&lt;/p&gt;
 &lt;span class=&quot;giallo-l z-l-hl z-d-hl&quot;&gt;&lt;span&gt;vdivsd&lt;/span&gt;&lt;span&gt;  %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm2&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm2&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;   # xmm1 = 3.0&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&quot;giallo-l z-l-hl z-d-hl&quot;&gt;&lt;span&gt;vaddsd&lt;/span&gt;&lt;span&gt;  %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm2&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm0&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm0&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;# repeated 8 times&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
-&lt;p&gt;Enabling the &lt;code&gt;algebraic_scalar&lt;/code&gt; feature gives this instead:&lt;/p&gt;
+&lt;p&gt;Enabling the &lt;span class=&quot;kw&quot;&gt;&lt;code&gt;algebraic_scalar&lt;/code&gt;&lt;/span&gt; feature gives this instead:&lt;/p&gt;
 &lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;asm&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vbroadcastsd&lt;/span&gt;&lt;span&gt; __real@3fd5555555555555(%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rip&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;   # 1/3&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vfmadd231pd&lt;/span&gt;&lt;span&gt;  (%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rcx&lt;/span&gt;&lt;span&gt;,%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;r10&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;8&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm0&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vfmadd231pd&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;  32&lt;/span&gt;&lt;span&gt;(%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rcx&lt;/span&gt;&lt;span&gt;,%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;r10&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;8&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm2&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vfmadd231pd&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;  64&lt;/span&gt;&lt;span&gt;(%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rcx&lt;/span&gt;&lt;span&gt;,%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;r10&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;8&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm3&lt;/span&gt;&lt;/span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vfmadd231pd&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;  96&lt;/span&gt;&lt;span&gt;(%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rcx&lt;/span&gt;&lt;span&gt;,%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;r10&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;8&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm4&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
-&lt;p&gt;The division is gone entirely, replaced by a multiply against a rounded &lt;code&gt;$1/3$&lt;/code&gt;.
+&lt;p&gt;The division is gone entirely, replaced by a multiply against a rounded &lt;code&gt;$1/3$&lt;/code&gt;, which is
+less precise but &quot;close enough&quot; for most use cases.
 The add contracted into that multiply, and the serial accumulator turned into
 four independent ones at four doubles apiece, so each iteration retires 16 elements in 4
 instructions where the strict version needed 32. With a runtime divisor it does the same
@@ -112,21 +115,17 @@ and &lt;code&gt;$n \pi$&lt;/code&gt; is nowhere near representable. Algebraicall
 degrades from full precision to whatever &lt;code&gt;$x - n\pi$&lt;/code&gt; happens to give. Not good.&lt;/p&gt;
 &lt;p&gt;&lt;code&gt;exp&lt;/code&gt; and &lt;code&gt;ln&lt;/code&gt; have similar range reduction. &lt;code&gt;algebraic_scalar&lt;/code&gt; would silently break that
 when using the math library with scalars. The effects of it spread quite far.&lt;/p&gt;
-&lt;p&gt;For that reason, &lt;code&gt;thermite-compensated&lt;/code&gt; previously would emit a &lt;code&gt;compile_error!&lt;/code&gt; if used with the &lt;code&gt;algebraic_scalar&lt;/code&gt; feature enabled. It would have been simply broken.&lt;/p&gt;
-&lt;h2 id=&quot;the-solution&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#the-solution&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
-The Solution&lt;/h2&gt;
-&lt;p&gt;I simply moved &lt;code&gt;two_sum&lt;/code&gt;/&lt;code&gt;two_diff&lt;/code&gt;/&lt;code&gt;two_prod&lt;/code&gt;/&lt;code&gt;two_quot&lt;/code&gt; from &lt;code&gt;thermite-compensated&lt;/code&gt; and put them on &lt;code&gt;FloatRegister&lt;/code&gt;/&lt;code&gt;FloatVectorWithBits&lt;/code&gt;.&lt;/p&gt;
-&lt;p&gt;That way they can bypass the algebraic math intrinsics, using strict operators for compensated arithmetic, while also allowing anyone to use them anywhere that &lt;code&gt;FloatVectorWithBits&lt;/code&gt; is available. That&#39;s actually an important distinction, because if it were only &lt;code&gt;FloatVector&lt;/code&gt;, &lt;code&gt;two_sum&lt;/code&gt; would have to be available on &lt;code&gt;Complex&lt;/code&gt; or &lt;code&gt;Dual&lt;/code&gt; composite types that implement &lt;code&gt;FloatVector&lt;/code&gt;. Compensated arithmetic on those
+&lt;p&gt;For that reason, &lt;a rel=&quot;noopener external&quot; target=&quot;_blank&quot; href=&quot;https://raygon-renderer.github.io/thermite/thermite_compensated/index.html&quot;&gt;&lt;code&gt;thermite-compensated&lt;/code&gt;&lt;/a&gt; previously would emit a &lt;code&gt;compile_error!&lt;/code&gt; if used with the &lt;code&gt;algebraic_scalar&lt;/code&gt; feature enabled. It would have been simply broken.&lt;/p&gt;
+&lt;h2 id=&quot;the-solution-is-more-than-the-two-sum-of-its-parts&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#the-solution-is-more-than-the-two-sum-of-its-parts&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+The Solution is more than the &lt;code&gt;two_sum&lt;/code&gt; of its parts&lt;/h2&gt;
+&lt;p&gt;Fixing all of these weak points was simply a matter of moving &lt;code&gt;two_sum&lt;/code&gt;/&lt;code&gt;two_diff&lt;/code&gt;/&lt;code&gt;two_prod&lt;/code&gt;/&lt;code&gt;two_quot&lt;/code&gt; from &lt;a rel=&quot;noopener external&quot; target=&quot;_blank&quot; href=&quot;https://raygon-renderer.github.io/thermite/thermite_compensated/index.html&quot;&gt;&lt;code&gt;thermite-compensated&lt;/code&gt;&lt;/a&gt; and putting them on &lt;code&gt;FloatRegister&lt;/code&gt;/&lt;code&gt;FloatVectorWithBits&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;That way they can bypass the algebraic math intrinsics in the scalar backend implementation, using strict operators for compensated arithmetic, while also allowing anyone to use them anywhere that &lt;code&gt;FloatVectorWithBits&lt;/code&gt; is available. That&#39;s actually an important distinction, because if it were only &lt;code&gt;FloatVector&lt;/code&gt;, &lt;code&gt;two_sum&lt;/code&gt; would have to be available on &lt;code&gt;Complex&lt;/code&gt; or &lt;code&gt;Dual&lt;/code&gt; composite types that implement &lt;code&gt;FloatVector&lt;/code&gt;. Compensated arithmetic on those
 only makes sense as an implementation detail, not on the public interface.&lt;/p&gt;
-&lt;p&gt;Furthermore, &lt;code&gt;mul_adde&lt;/code&gt; and family inherently use strict operators as well, so &lt;code&gt;mul_adde&lt;/code&gt; cannot be reassociated.&lt;/p&gt;
-&lt;h2 id=&quot;more-than-the-two-sum-of-its-parts&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#more-than-the-two-sum-of-its-parts&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
-More than the &lt;code&gt;two_sum&lt;/code&gt; of its parts&lt;/h2&gt;
-&lt;p&gt;Originally, this change was just because I wanted &lt;code&gt;thermite-compensated&lt;/code&gt; to compile regardless of what crate features users&#39; used. However, I&#39;ve since found quite a few places in Thermite&#39;s math libraries where either strict operators or compensated arithmetic significantly improve precision, nearly for free in many cases.&lt;/p&gt;
-&lt;p&gt;Although not taking advantage of algebraic reassociation, LLVM is smart enough to see that &lt;code&gt;a.two_sum(b).0&lt;/code&gt; (accessing only the sum, ignoring the error) can ignore the error calculation entirely, returning &lt;code&gt;a + b&lt;/code&gt;, &lt;em&gt;but with a strict operator&lt;/em&gt;. In a way it provides an escape hatch for algorithms to 100% ensure that the sum is exactly that, not mixed in with nearby values. Same with the others.&lt;/p&gt;
-&lt;p&gt;This pattern and just using &lt;code&gt;two_sum&lt;/code&gt;/&lt;code&gt;two_prod&lt;/code&gt; deep in the math implementations helped improve or stabilize precision across
-a wide variety of functions, and fixed a few latent bugs that would have crippled the emulated FMA paths.&lt;/p&gt;
-&lt;p&gt;Now, &lt;code&gt;algebraic_scalar&lt;/code&gt; is fully supported with &lt;code&gt;thermite-compensated&lt;/code&gt;, no issues, and the autovectorizer can do an even better job
-everywhere if that feature is enabled. Win-win.&lt;/p&gt;
+&lt;p&gt;Furthermore, FMA, even &lt;code&gt;mul_adde&lt;/code&gt; (opportunistic FMA: fused where the hardware has it, separate mul+add where not) and family, inherently use strict operators as well so they cannot be reassociated.&lt;/p&gt;
+&lt;p&gt;Although not taking advantage of algebraic reassociation, LLVM is smart enough to see that &lt;code&gt;a.two_sum(b).0&lt;/code&gt; (accessing only the sum, ignoring the error) can ignore the error calculation entirely, returning &lt;code&gt;a + b&lt;/code&gt;, &lt;em&gt;but with a strict operator&lt;/em&gt;. In a way it provides an escape hatch for algorithms to ensure that the sum is exactly that, not mixed in with nearby values. Same with the others.&lt;/p&gt;
+&lt;p&gt;This pattern and just using &lt;code&gt;two_sum&lt;/code&gt;/&lt;code&gt;two_prod&lt;/code&gt; deep in the math implementations helped improve or stabilize precision across a wide variety of functions, and fixed a few latent bugs that would have crippled the emulated FMA paths. Range
+reduction, accumulators, etc., are now fixed and stable under the feature.&lt;/p&gt;
+&lt;p&gt;Originally, this change was just because I wanted &lt;a rel=&quot;noopener external&quot; target=&quot;_blank&quot; href=&quot;https://raygon-renderer.github.io/thermite/thermite_compensated/index.html&quot;&gt;&lt;code&gt;thermite-compensated&lt;/code&gt;&lt;/a&gt; to compile regardless of what crate features users used. However, I&#39;ve since found quite a few places in Thermite&#39;s math libraries where either strict operators or compensated arithmetic significantly improve precision, nearly for free in many cases, and the autovectorizer can do an even better job everywhere if that feature is enabled. Win-win.&lt;/p&gt;
 </content>
         
     </entry>
