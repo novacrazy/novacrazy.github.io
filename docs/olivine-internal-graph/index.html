@@ -1,0 +1,143 @@
+<!doctype html><html lang=en><head><meta content="text/html; charset=utf-8" http-equiv=content-type><meta content="width=device-width,initial-scale=1" name=viewport><meta content=#786 name=theme-color><title>Nova's blog · Graph</title><meta content=Graph name=description><meta content="Nova's blog" property=og:site_name><meta content=website property=og:type><meta content=Graph property=og:title><meta property=og:description><meta content=https://novacrazy.github.io/olivine-internal-graph/ property=og:url><meta content=summary name=twitter:card><link href=https://novacrazy.github.io/atom.xml rel=alternate title=Atom type=application/atom+xml><link href=https://novacrazy.github.io/rss.xml rel=alternate title=RSS type=application/rss+xml><link href=https://novacrazy.github.io/olivine.css rel=stylesheet><link onload="this.onload=null;this.rel='stylesheet'" as=style href=https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css rel=preload><noscript><link href=https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css rel=stylesheet></noscript><link href=https://novacrazy.github.io/main.css rel=stylesheet><link as=font crossorigin href=https://novacrazy.github.io/fonts/Hasklig-Regular.woff2 rel=preload type=font/woff2><link href=https://novacrazy.github.io/giallo-light.css id=giallo-light rel=stylesheet><link href=https://novacrazy.github.io/giallo-dark.css id=giallo-dark rel=stylesheet><link href=https://novacrazy.github.io/theme-overrides.css rel=stylesheet><script>// Import Zola variables to Javascript
+  var olivine = {
+    base_url: "https://novacrazy.github.io",
+    
+    
+  };</script><script src=https://novacrazy.github.io/olivine.js></script><script>(function () {
+            var html = document.documentElement;
+            var light = document.getElementById("giallo-light");
+            var dark = document.getElementById("giallo-dark");
+
+            function syncCodeTheme() {
+                var isLight = html.getAttribute("data-theme") === "light";
+                light.disabled = !isLight;
+                dark.disabled = isLight;
+            }
+
+            syncCodeTheme();
+            new MutationObserver(syncCodeTheme).observe(html, {
+                attributes: true,
+                attributeFilter: ["data-theme"]
+            });
+        })();</script><script defer src=https://novacrazy.github.io/site.js></script><script src=https://cdn.jsdelivr.net/npm/cytoscape@3/dist/cytoscape.min.js></script><body class=leftbar><script>setSidebar();</script><header><div><div aria-label="Toggle navigation" onclick="toggleBar('leftbar')" id=leftbar-toggle role=button title=Navigation><span class=olivine-icon><i class="fa-solid fa-bars"></i></span></div><div dir=rtl id=olivine-breadcrumb><a href=https://novacrazy.github.io/>Nova's blog</a><span> / </span> Graph</div><noscript><style>#search{display:none}</style></noscript><div id=search><input id=search-input placeholder=Search... type=search><div id=search-results></div></div><div onclick=toggleTheme()><span class=olivine-icon><i class="fa-solid fa-palette"></i></span></div><div onclick="toggleBar('rightbar')"><span class=olivine-icon><i class="fa-solid fa-book"></i></span></div></div></header><div class=sidebar id=leftbar><div class=sidebar-content><ul id=olivine-directory><li><a href=https://novacrazy.github.io/index/><span class=olivine-icon><i class="fa-solid fa-list"></i></span> Index</a><li><span class=dir-date>2026-09-19</span> <a href=https://novacrazy.github.io/2026-09-19-comp-in-core/>Compensated Arithmetic in Core</a></ul><hr noshade style=width:100%><ul><li><a href=https://novacrazy.github.io/olivine-internal-graph/><span class=olivine-icon><i class="fa-solid fa-diagram-project"></i></span> Graph view</a></ul><ul><li><a href=https://novacrazy.github.io/tags/><span class=olivine-icon><i class="fa-solid fa-tags"></i></span>Tags</a></ul></div></div><div class=sidebar id=rightbar><div class=sidebar-content></div></div><div id=main-area><div aria-hidden=true id=read-progress></div><main><h1>Graph view</h1><div id=olivine-graph></div><script>let cy_elements = [
+{ data: { id: '/tags/eft/', type: 'tag', name: '#eft' } },
+{ data: { source: '/2026-09-19-comp-in-core/', target: '/tags/eft/' } },
+{ data: { id: '/tags/math/', type: 'tag', name: '#math' } },
+{ data: { source: '/2026-09-19-comp-in-core/', target: '/tags/math/' } },
+{ data: { id: '/tags/thermite/', type: 'tag', name: '#thermite' } },
+{ data: { source: '/2026-09-19-comp-in-core/', target: '/tags/thermite/' } },
+{ data: { id: '/', type: 'section', name: "Nova's blog" } },
+{ data: { id: '/2026-09-19-comp-in-core/', type: 'page', name: "Compensated Arithmet…" } },
+{ data: { source: '/2026-09-19-comp-in-core/', target: '/' } },
+{ data: { id: '/index/', type: 'page', name: "Index" } },
+{ data: { source: '/index/', target: '/' } },
+{ data: { id: '/olivine-internal-graph/', type: 'page', name: "Graph" } },
+{ data: { source: '/olivine-internal-graph/', target: '/' } },
+{ data: { id: '/olivine-internal-sitemap/', type: 'page', name: "Sitemap" } },
+{ data: { source: '/olivine-internal-sitemap/', target: '/' } },
+{ data: { id: '/search/', type: 'page', name: "Search" } },
+{ data: { source: '/search/', target: '/' } },
+];function bad_id(id) {
+  return id.startsWith("/olivine-internal");
+}
+cy_elements = cy_elements.filter(item => {
+  if (item.data.id === undefined) {
+    return (item.data.source !== item.data.target) && !bad_id(item.data.source)
+      && !bad_id(item.data.target);
+  } else {
+    return !bad_id(item.data.id);
+  }
+});function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name);
+  return v.trim() || fallback;
+}
+
+const NODE_BASE = 0.85;
+const EDGE_BASE = 0.35;
+
+function graphStyle() {
+  const text = cssVar('--body-text', '#ccc');
+  const link = cssVar('--link', '#8b7');
+  const dim = cssVar('--sidebar-text', text);
+  return [{
+    selector: "node",
+    style: {
+      label: "data(name)",
+      width: 8,
+      height: 8,
+      "text-valign": "bottom",
+      "text-halign": "center",
+      "text-margin-y": 2,
+      color: text,
+      "background-color": link,
+      opacity: NODE_BASE,
+      "font-size": 7,
+      "min-zoomed-font-size": 5,
+    }}, {
+    selector: 'node[type="section"]',
+    style: {
+      width: 11,
+      height: 11,
+      "font-size": 9,
+      "background-color": text,
+    }}, {
+    selector: 'node[type="tag"]',
+    style: {
+      shape: "diamond",
+      "background-color": dim,
+    }}, {
+    selector: "edge",
+    style: {
+      width: 1,
+      "curve-style": "straight",
+      "line-color": text,
+      opacity: EDGE_BASE,
+    }},
+  ];
+}
+
+const cy = cytoscape({
+  container: document.getElementById('olivine-graph'),
+  elements: cy_elements,
+  layout: {
+    name: 'cose',
+    padding: 24,
+    animate: false,
+  },
+  style: graphStyle(),
+  autoungrabify: true,
+  autounselectify: true,maxZoom: 5,
+});function fitGraph() {
+  cy.resize();
+  cy.fit(undefined, 24);
+}
+
+cy.ready(fitGraph);
+cy.on('layoutstop', fitGraph);
+new ResizeObserver(fitGraph).observe(document.getElementById('olivine-graph'));
+
+new MutationObserver(function () {
+  cy.style(graphStyle());
+}).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ['data-theme'],
+});
+
+cy.on('mouseover touchstart', 'node', function(evt){
+  var node = evt.target;
+  node.style('opacity', 1);
+  for (adj of node.neighborhood())
+    adj.style('opacity', adj.isNode() ? 1 : 0.9);
+});
+
+cy.on('mouseout touchend', 'node', function(evt){
+  var node = evt.target;
+  node.style('opacity', NODE_BASE);
+  for (adj of node.neighborhood())
+    adj.style('opacity', adj.isNode() ? NODE_BASE : EDGE_BASE);
+});
+
+cy.on('tap', 'node', function(evt){
+  var node = evt.target;
+  window.location.href = olivine.base_url + node.id();
+});</script></main></div><div id=help-window style=display:none><div><h1>Keyboard shortcuts</h1><div id=help-shortcuts><div><code>j</code> scroll down</div><div><code>k</code> scroll up</div><div><code>g</code> scroll to top</div><div><code>G</code> scroll to bottom</div><div><code>h</code> go to previous sibling</div><div><code>l</code> go to next sibling</div><div><code>u</code> go to parent</div><div><code>U</code> go to root</div><div><code>r</code> reload page</div><div><code>H</code> go back in history</div><div><code>L</code> go forward in history</div><div><code>t</code> toggle theme</div><div><code>[</code> toggle left sidebar</div><div><code>]</code> toggle right sidebar</div><div><code>f</code> open and close link options</div><div><code>/</code> focus searchbar</div><div><code>?</code> toggle keyboard shortcuts</div><div><code>Esc</code> focus document</div></div></div></div>

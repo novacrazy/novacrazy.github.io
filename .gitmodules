@@ -1,0 +1,3 @@
+[submodule "themes/olivine"]
+	path = themes/olivine
+	url = https://github.com/dongryul-kim/olivine.git

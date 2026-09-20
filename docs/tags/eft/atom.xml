@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+    <title>Nova&#39;s blog - eft</title>
+    <link rel="self" type="application/atom+xml" href="https://novacrazy.github.io/tags/eft/atom.xml"/>
+    <link rel="alternate" type="text/html" href="https://novacrazy.github.io"/>
+    <generator uri="https://www.getzola.org/">Zola</generator>
+    <updated>2026-09-19T00:00:00+00:00</updated>
+    <id>https://novacrazy.github.io/tags/eft/atom.xml</id>
+    <entry xml:lang="en">
+        <title>Compensated Arithmetic in Core</title>
+        <published>2026-09-19T00:00:00+00:00</published>
+        <updated>2026-09-19T00:00:00+00:00</updated>
+        
+        <author>
+          <name>Nova</name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://novacrazy.github.io/2026-09-19-comp-in-core/"/>
+        <id>https://novacrazy.github.io/2026-09-19-comp-in-core/</id>
+        
+        <content type="html" xml:base="https://novacrazy.github.io/2026-09-19-comp-in-core/">&lt;p&gt;Prior to recent changes, Thermite core (&lt;code&gt;thermite&lt;/code&gt;) didn&#39;t expose raw compensated
+arithmetic primitives like &lt;code&gt;two_sum&lt;/code&gt; and &lt;code&gt;two_prod&lt;/code&gt;. &lt;code&gt;thermite-compensated&lt;/code&gt; had them,
+as a separate crate, but it turns out that it&#39;s pretty useful to keep the basic compensated ops around at a very low level.&lt;/p&gt;
+&lt;h2 id=&quot;what-is-compensated-arithmetic&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#what-is-compensated-arithmetic&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+What is Compensated Arithmetic?&lt;/h2&gt;
+&lt;p&gt;Compensated arithmetic, more formally known as Error-Free Transforms,
+is a way of recovering the error lost by rounding when applying basic
+operators such as addition, subtraction, multiplication, and division.
+Almost everything else falls out from that.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;a + b&lt;/code&gt; in an &lt;code&gt;f64&lt;/code&gt; isn&#39;t &lt;code&gt;a + b&lt;/code&gt;. The exact sum can need up to twice the mantissa bits to
+write down, so the hardware rounds it to the nearest representable value and drops the rest.
+What gets dropped is the interesting part, because for addition it&#39;s always exactly
+representable in the same format. Knuth&#39;s 2Sum recovers it in six adds, no branches, no
+extra precision.&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;math&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;s = \mathrm{fl}(a + b), \qquad e = (a + b) - s, \qquad s + e = a + b&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;$s$&lt;/code&gt; is the result you would have gotten anyway, and &lt;code&gt;$e$&lt;/code&gt; is exactly what the rounding
+lost, so the pair &lt;code&gt;$(s, e)$&lt;/code&gt; holds the exact sum in two words. Nothing is lost, the
+value is just re-encoded across two floats.&lt;/p&gt;
+&lt;p&gt;Multiplication works out the same way. The exact product of two &lt;code&gt;$p$&lt;/code&gt;-bit values needs
+&lt;code&gt;$2p$&lt;/code&gt; bits, and the residual left after rounding fits in &lt;code&gt;$p$&lt;/code&gt; of them, so it&#39;s
+recoverable as well. With a true fused multiply-add that&#39;s two instructions:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; p&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; a&lt;/span&gt;&lt;span&gt; *&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; b&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; e&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; a&lt;/span&gt;&lt;span&gt;.&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;mul_sub&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;b&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; p&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; //&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; fma(a, b, -p)&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Without FMA, you need Dekker&#39;s algorithm, which cuts both operands into half-width pieces
+with Veltkamp splitting and sums the four cross products in the right order. That&#39;s 17
+operations instead of 2, so many algorithms prefer other methods when native FMA isn&#39;t
+available.&lt;/p&gt;
+&lt;p&gt;Everything else is built on those two. Double-double arithmetic (&lt;code&gt;Compensated&amp;lt;f64&amp;gt;&lt;/code&gt;, around
+106 bits of significand) is a &lt;code&gt;two_sum&lt;/code&gt;/&lt;code&gt;two_prod&lt;/code&gt; pair plus renormalization. Kahan and
+Neumaier summation are &lt;code&gt;two_sum&lt;/code&gt; with the error fed back into the next iteration. A
+correctly-rounded &lt;code&gt;mul_add&lt;/code&gt; on hardware without an FMA instruction is Boldo and Melquiond&#39;s
+construction, built out of &lt;code&gt;two_prod&lt;/code&gt; and &lt;code&gt;two_sum&lt;/code&gt;. Interval arithmetic needs the residual
+to know which way to nudge an endpoint. It&#39;s pretty handy all things considered.&lt;/p&gt;
+&lt;p&gt;One catch is that this buys precision, not range. The exponent is untouched, so anything
+that overflows or flushes to zero is still gone, and Veltkamp splitting has its own
+threshold (&lt;code&gt;$2^{115}$&lt;/code&gt; for &lt;code&gt;f32&lt;/code&gt;) past which operands have to be rebalanced before they can
+be split at all.&lt;/p&gt;
+&lt;h2 id=&quot;algebraic-scalar&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#algebraic-scalar&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+&lt;code&gt;algebraic_scalar&lt;/code&gt;&lt;/h2&gt;
+&lt;p&gt;Thermite has the &lt;code&gt;algebraic_scalar&lt;/code&gt; Cargo feature to enable the &quot;Algebraic&quot; float ops,
+which allow LLVM to casually reassociate operations to improve performance or improve
+autovectorization opportunities. This is honestly great for most scalar code. If you
+are not or cannot use SIMD for one reason or another, making the scalar fallbacks as fast
+as possible is ideal.&lt;/p&gt;
+&lt;p&gt;Summation with a division in it is the clearest example:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;//&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; NOTE: &amp;quot;Scalars&amp;quot; in Thermite are still wrapped in `Vector`&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;let&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; mut&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; sum&lt;/span&gt;&lt;span&gt;:&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; Vector&lt;/span&gt;&lt;span&gt;&amp;lt;&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;f64&lt;/span&gt;&lt;span&gt;&amp;gt;&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; Vector&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;splat&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;0&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-13 z-d-11&quot;&gt;for&lt;/span&gt;&lt;span&gt; &amp;amp;&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;x&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; in&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; xs&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;    sum&lt;/span&gt;&lt;span&gt; +=&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; x&lt;/span&gt;&lt;span&gt; /&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; Vector&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;splat&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;3&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;0&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;}&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Strict, at &lt;code&gt;-O -C target-cpu=x86-64-v3&lt;/code&gt;, the inner loop is unrolled 8x and every copy looks
+like this:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;asm&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;...&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vmovsd&lt;/span&gt;&lt;span&gt;  (%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rax&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm2&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l z-l-hl z-d-hl&quot;&gt;&lt;span&gt;vdivsd&lt;/span&gt;&lt;span&gt;  %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm2&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm2&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;   # xmm1 = 3.0&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l z-l-hl z-d-hl&quot;&gt;&lt;span&gt;vaddsd&lt;/span&gt;&lt;span&gt;  %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm2&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm0&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;xmm0&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;# repeated 8 times&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Enabling the &lt;code&gt;algebraic_scalar&lt;/code&gt; feature gives this instead:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;asm&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vbroadcastsd&lt;/span&gt;&lt;span&gt; __real@3fd5555555555555(%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rip&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;   # 1/3&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vfmadd231pd&lt;/span&gt;&lt;span&gt;  (%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rcx&lt;/span&gt;&lt;span&gt;,%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;r10&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;8&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm0&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vfmadd231pd&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;  32&lt;/span&gt;&lt;span&gt;(%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rcx&lt;/span&gt;&lt;span&gt;,%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;r10&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;8&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm2&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vfmadd231pd&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;  64&lt;/span&gt;&lt;span&gt;(%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rcx&lt;/span&gt;&lt;span&gt;,%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;r10&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;8&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm3&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;vfmadd231pd&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;  96&lt;/span&gt;&lt;span&gt;(%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;rcx&lt;/span&gt;&lt;span&gt;,%&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;r10&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-7 z-d-10&quot;&gt;8&lt;/span&gt;&lt;span&gt;), %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm1&lt;/span&gt;&lt;span&gt;, %&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;ymm4&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The division is gone entirely, replaced by a multiply against a rounded &lt;code&gt;$1/3$&lt;/code&gt;.
+The add contracted into that multiply, and the serial accumulator turned into
+four independent ones at four doubles apiece, so each iteration retires 16 elements in 4
+instructions where the strict version needed 32. With a runtime divisor it does the same
+thing and just hoists a single &lt;code&gt;vdivsd&lt;/code&gt; out of the loop. This is a great trade for most
+code.&lt;/p&gt;
+&lt;p&gt;However, taking a look at &lt;code&gt;two_sum&lt;/code&gt;:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;fn&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt; two_sum&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;a&lt;/span&gt;&lt;span&gt;:&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; Self&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; b&lt;/span&gt;&lt;span&gt;:&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; Self&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; -&amp;gt;&lt;/span&gt;&lt;span&gt; (&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;Self&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; Self&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;    let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; s&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; a&lt;/span&gt;&lt;span&gt; +&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; b&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;    let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; v&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; s&lt;/span&gt;&lt;span&gt; -&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; a&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;    let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; e&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span&gt; (&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;a&lt;/span&gt;&lt;span&gt; -&lt;/span&gt;&lt;span&gt; (&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;s&lt;/span&gt;&lt;span&gt; -&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; v&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; +&lt;/span&gt;&lt;span&gt; (&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;b&lt;/span&gt;&lt;span&gt; -&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; v&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    (&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;s&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; e&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;}&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As real-number algebra, with &lt;code&gt;$s = a + b$&lt;/code&gt; and &lt;code&gt;$v = s - a$&lt;/code&gt;, reassociation collapses &lt;code&gt;$v = (a + b) - a = b$&lt;/code&gt;, and with it the whole error term becomes zero:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;math&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;e = \bigl(a - (s - v)\bigr) + (b - v) = (a - a) + (b - b) = 0&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;LLVM is free to do this in multiple places, including common Cody-Waite style range reductions that occur in almost everything.&lt;/p&gt;
+&lt;p&gt;For example, average-precision &lt;code&gt;sin&lt;/code&gt;/&lt;code&gt;cos&lt;/code&gt; reduces its argument modulo &lt;code&gt;$\pi$&lt;/code&gt; by splitting the constant across
+several floats, &lt;code&gt;$\pi \approx \pi_A + \pi_B + \pi_C$&lt;/code&gt;, where &lt;code&gt;$\pi_A$&lt;/code&gt; has enough low
+mantissa bits zeroed that &lt;code&gt;$n \pi_A$&lt;/code&gt; is &lt;em&gt;exact&lt;/em&gt; for every &lt;code&gt;$n$&lt;/code&gt; in range, and each
+following term picks up the bits the previous one couldn&#39;t hold:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; n&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span&gt; (&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;x&lt;/span&gt;&lt;span&gt; *&lt;/span&gt;&lt;span&gt; FRAC_1_PI&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;.&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;round&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; r&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span&gt; (&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;x&lt;/span&gt;&lt;span&gt; -&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; n&lt;/span&gt;&lt;span&gt; *&lt;/span&gt;&lt;span&gt; PI_A&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; -&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; n&lt;/span&gt;&lt;span&gt; *&lt;/span&gt;&lt;span&gt; PI_B&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; -&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; n&lt;/span&gt;&lt;span&gt; *&lt;/span&gt;&lt;span&gt; PI_C&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The subtractions are deliberately sequenced so that each one cancels against a quantity
+of its own magnitude, keeping &lt;code&gt;$r$&lt;/code&gt; accurate to full precision even when &lt;code&gt;$x$&lt;/code&gt; is large
+and &lt;code&gt;$n \pi$&lt;/code&gt; is nowhere near representable. Algebraically, though:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;math&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;r = x - n(\pi_A + \pi_B + \pi_C) = x - n\pi&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;so LLVM is free to fold the three constants into one rounded &lt;code&gt;$\pi$&lt;/code&gt; and emit a single
+&lt;code&gt;$x - n\pi$&lt;/code&gt;. The extra &lt;code&gt;$\approx 50$&lt;/code&gt; bits of the constant vanish, and the reduction
+degrades from full precision to whatever &lt;code&gt;$x - n\pi$&lt;/code&gt; happens to give. Not good.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;exp&lt;/code&gt; and &lt;code&gt;ln&lt;/code&gt; have similar range reduction. &lt;code&gt;algebraic_scalar&lt;/code&gt; would silently break that
+when using the math library with scalars. The effects of it spread quite far.&lt;/p&gt;
+&lt;p&gt;For that reason, &lt;code&gt;thermite-compensated&lt;/code&gt; previously would emit a &lt;code&gt;compile_error!&lt;/code&gt; if used with the &lt;code&gt;algebraic_scalar&lt;/code&gt; feature enabled. It would have been simply broken.&lt;/p&gt;
+&lt;h2 id=&quot;the-solution&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#the-solution&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+The Solution&lt;/h2&gt;
+&lt;p&gt;I simply moved &lt;code&gt;two_sum&lt;/code&gt;/&lt;code&gt;two_diff&lt;/code&gt;/&lt;code&gt;two_prod&lt;/code&gt;/&lt;code&gt;two_quot&lt;/code&gt; from &lt;code&gt;thermite-compensated&lt;/code&gt; and put them on &lt;code&gt;FloatRegister&lt;/code&gt;/&lt;code&gt;FloatVectorWithBits&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;That way they can bypass the algebraic math intrinsics, using strict operators for compensated arithmetic, while also allowing anyone to use them anywhere that &lt;code&gt;FloatVectorWithBits&lt;/code&gt; is available. That&#39;s actually an important distinction, because if it were only &lt;code&gt;FloatVector&lt;/code&gt;, &lt;code&gt;two_sum&lt;/code&gt; would have to be available on &lt;code&gt;Complex&lt;/code&gt; or &lt;code&gt;Dual&lt;/code&gt; composite types that implement &lt;code&gt;FloatVector&lt;/code&gt;. Compensated arithmetic on those
+only makes sense as an implementation detail, not on the public interface.&lt;/p&gt;
+&lt;p&gt;Furthermore, &lt;code&gt;mul_adde&lt;/code&gt; and family inherently use strict operators as well, so &lt;code&gt;mul_adde&lt;/code&gt; cannot be reassociated.&lt;/p&gt;
+&lt;h2 id=&quot;more-than-the-two-sum-of-its-parts&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#more-than-the-two-sum-of-its-parts&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+More than the &lt;code&gt;two_sum&lt;/code&gt; of its parts&lt;/h2&gt;
+&lt;p&gt;Originally, this change was just because I wanted &lt;code&gt;thermite-compensated&lt;/code&gt; to compile regardless of what crate features users&#39; used. However, I&#39;ve since found quite a few places in Thermite&#39;s math libraries where either strict operators or compensated arithmetic significantly improve precision, nearly for free in many cases.&lt;/p&gt;
+&lt;p&gt;Although not taking advantage of algebraic reassociation, LLVM is smart enough to see that &lt;code&gt;a.two_sum(b).0&lt;/code&gt; (accessing only the sum, ignoring the error) can ignore the error calculation entirely, returning &lt;code&gt;a + b&lt;/code&gt;, &lt;em&gt;but with a strict operator&lt;/em&gt;. In a way it provides an escape hatch for algorithms to 100% ensure that the sum is exactly that, not mixed in with nearby values. Same with the others.&lt;/p&gt;
+&lt;p&gt;This pattern and just using &lt;code&gt;two_sum&lt;/code&gt;/&lt;code&gt;two_prod&lt;/code&gt; deep in the math implementations helped improve or stabilize precision across
+a wide variety of functions, and fixed a few latent bugs that would have crippled the emulated FMA paths.&lt;/p&gt;
+&lt;p&gt;Now, &lt;code&gt;algebraic_scalar&lt;/code&gt; is fully supported with &lt;code&gt;thermite-compensated&lt;/code&gt;, no issues, and the autovectorizer can do an even better job
+everywhere if that feature is enabled. Win-win.&lt;/p&gt;
+</content>
+        
+    </entry>
+</feed>
