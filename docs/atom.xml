@@ -4,8 +4,103 @@
     <link rel="self" type="application/atom+xml" href="https://novacrazy.github.io/atom.xml"/>
     <link rel="alternate" type="text/html" href="https://novacrazy.github.io"/>
     <generator uri="https://www.getzola.org/">Zola</generator>
-    <updated>2026-09-19T00:00:00+00:00</updated>
+    <updated>2026-09-20T00:00:00+00:00</updated>
     <id>https://novacrazy.github.io/atom.xml</id>
+    <entry xml:lang="en">
+        <title>Three-State Logic for FMA</title>
+        <published>2026-09-20T00:00:00+00:00</published>
+        <updated>2026-09-20T00:00:00+00:00</updated>
+        
+        <author>
+          <name>Nova</name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://novacrazy.github.io/2026-09-21-tribool-fma/"/>
+        <id>https://novacrazy.github.io/2026-09-21-tribool-fma/</id>
+        
+        <content type="html" xml:base="https://novacrazy.github.io/2026-09-21-tribool-fma/">&lt;div class=&quot;olivine-admonish&quot;&gt;
+TL;DR: WebAssembly is weird. Whether it has true fused multiply-add is not
+known at compile time, and basing algorithm decisions around any assumption
+has the potential to break things.
+&lt;/div&gt;
+&lt;p&gt;You would think that whether or not a backend has true native Fused Multiply-Add (FMA) instructions would be pretty cut and dry, right? Until recently, Thermite types indicated if they have true native FMA instructions via a &lt;code&gt;HAS_TRUE_FMA&lt;/code&gt; associated const &lt;code&gt;bool&lt;/code&gt;. However, that was insufficient, and broken at worst.&lt;/p&gt;
+&lt;h2 id=&quot;why-indicate-true-fma&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#why-indicate-true-fma&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+Why Indicate True FMA&lt;/h2&gt;
+&lt;p&gt;It&#39;s quite helpful to have algorithms decide on certain paths or optimizations, at compile-time, based on if true FMA is available. For one, it&#39;s often as fast as a single multiply while doing both multiply and addition, so that alone accelerates many functions. It also only rounds once, so it can bypass extra effort required for that, such as some compensated arithmetic.&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-13 z-d-11&quot;&gt;if&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; const&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; V&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span&gt;HAS_TRUE_FMA&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; /*&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; ... &lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;*/&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;was used all over Thermite&#39;s math libraries for these kind of optimizations.&lt;/p&gt;
+&lt;p&gt;It&#39;s also worth knowing Thermite has two flavors of FMA, which are important:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;mul_add&lt;/code&gt; and family are &lt;strong&gt;always correctly rounded fused multiply-add&lt;/strong&gt;, regardless of backend. If there is no hardware FMA, it falls back to a bit-identical vectorized polyfill, which can be quite expensive.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;mul_adde&lt;/code&gt; and family are the &lt;strong&gt;opportunistic&lt;/strong&gt; forms. They are fused when FMA is a single instruction, but plain &lt;code&gt;a * b + c&lt;/code&gt; multiply+add where it isn&#39;t. Always fast, allowed to differ between backends.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;code&gt;mul_adde&lt;/code&gt; and family are used almost everywhere. Might as well opt for the fastest form available.&lt;/p&gt;
+&lt;h2 id=&quot;webassembly&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#webassembly&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+WebAssembly&lt;/h2&gt;
+&lt;p&gt;The WASM relaxed-simd proposal added &lt;code&gt;relaxed_madd&lt;/code&gt; and &lt;code&gt;relaxed_nmadd&lt;/code&gt; instructions. &quot;Relaxed&quot; meaning they act like &lt;code&gt;mul_adde&lt;/code&gt;/&lt;code&gt;nmul_adde&lt;/code&gt;, where it will use true FMA if available but otherwise fallback to &lt;code&gt;a*b+c&lt;/code&gt; for performance. Nothing is guaranteed about which one you get, the engine is free to do whatever it wants. The only promise is that the choice is fixed for the lifetime of the module instance, which is what makes detecting it once at startup sound.&lt;/p&gt;
+&lt;p&gt;However, one change I made recently was to opportunistically enable true FMA on WASM if it&#39;s detected at startup. Using some WASM tricks, I inject a bit of code that runs before &lt;code&gt;main()&lt;/code&gt;, updating a &lt;code&gt;static mut&lt;/code&gt; global variable:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;#&lt;/span&gt;&lt;span&gt;[&lt;/span&gt;&lt;span&gt;used&lt;/span&gt;&lt;span&gt;]&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;#&lt;/span&gt;&lt;span&gt;[&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;unsafe&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span&gt;link_section &lt;/span&gt;&lt;span&gt;=&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt; &amp;quot;&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt;.init_array&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;]&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;static&lt;/span&gt;&lt;span&gt; INIT_WASM_RELAXED_FMA&lt;/span&gt;&lt;span&gt;:&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; extern&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt; &amp;quot;&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt;C&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt; fn&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;    extern&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt; &amp;quot;&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt;C&lt;/span&gt;&lt;span class=&quot;z-l-12 z-d-13&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; fn&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt; init&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt; detect_relaxed_fma&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;    init&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;}&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The linker collects &lt;code&gt;.init_array&lt;/code&gt; entries into &lt;code&gt;__wasm_call_ctors&lt;/code&gt;, which runs before user code.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;mul_add&lt;/code&gt; and family then branch on that flag at runtime to opt into true FMA. Both arms are bit-identical, so that only trades speed.&lt;/p&gt;
+&lt;div class=&quot;olivine-admonish&quot;&gt;
+&lt;p&gt;Fun fact: &lt;code&gt;relaxed_madd&lt;/code&gt; and &lt;code&gt;relaxed_nmadd&lt;/code&gt; are separate instructions, and the spec allows an engine to fuse one and not the other. The init checks both independently.&lt;/p&gt;
+&lt;p&gt;Another fun fact: Using a &lt;code&gt;static mut&lt;/code&gt; was required because LLVM won&#39;t optimize loops or collapse redundant branches if using atomic accesses, even in single-threaded environments such as WASM. Polynomial evaluation would instead
+query the flag every single FMA call. With &lt;code&gt;static mut&lt;/code&gt; that query is hoisted above and branched on once, massively improving the codegen.&lt;/p&gt;
+&lt;/div&gt;
+&lt;h2 id=&quot;what-broke&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#what-broke&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+What Broke&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;mul_add&lt;/code&gt; was fine, that was always guaranteed to be the correctly rounded fused multiply-add. However, &lt;code&gt;mul_adde&lt;/code&gt; behaves differently. The default behavior of &lt;code&gt;mul_adde&lt;/code&gt; was to check &lt;code&gt;V::HAS_TRUE_FMA&lt;/code&gt; and either call &lt;code&gt;mul_add&lt;/code&gt;, or do &lt;code&gt;a*b+c&lt;/code&gt;, determined at compile time.&lt;/p&gt;
+&lt;p&gt;So when &lt;code&gt;mul_adde&lt;/code&gt; for WebAssembly specifically was overridden to ignore &lt;code&gt;V::HAS_TRUE_FMA&lt;/code&gt; and lower straight to &lt;code&gt;relaxed_madd&lt;/code&gt;, leaving the engine to decide, we had cases where math algorithms chose the &lt;code&gt;V::HAS_TRUE_FMA == false&lt;/code&gt; path but &lt;code&gt;mul_adde&lt;/code&gt; used true FMA internally.&lt;/p&gt;
+&lt;p&gt;Normally that&#39;s fine, but notably &quot;sum/difference of products&quot; breaks entirely.&lt;/p&gt;
+&lt;p&gt;For example, multiplying a quaternion by its own conjugate should give exactly &lt;code&gt;$(0, 0, 0, |q|^2)$&lt;/code&gt;. The fast quaternion product computes each lane as a sum of four products, two of them folded into &lt;code&gt;mul_adde&lt;/code&gt;s:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; sum12&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; Self&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;mul_adde&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;x&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; rhs_x_signed&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; Self&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;mul&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;w&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; rhs&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;let&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; sum34&lt;/span&gt;&lt;span&gt; =&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; Self&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;mul_adde&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;z&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; rhs_z_signed&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; Self&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;mul&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt;y&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-3 z-d-9&quot;&gt; rhs_y_signed&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For &lt;code&gt;$q \cdot \bar{q}$&lt;/code&gt; the vector lanes are made of pairs like &lt;code&gt;$t - t$&lt;/code&gt;. If every product is rounded, that&#39;s &lt;code&gt;$\mathrm{fl}(t) - \mathrm{fl}(t) = 0$&lt;/code&gt;, exact, for free. If &lt;code&gt;mul_adde&lt;/code&gt; fuses, one side of the pair is the &lt;em&gt;exact&lt;/em&gt; product and the other is rounded, and what survives is the rounding error:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;q = (0.1, 0.2, 0.3, 0.927...)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;q * conj(q) = [1.5188877683131223e-19, 0.0, -5.551115123125783e-17, 1.0]&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The quaternion product has a fast arm and an accurate arm that compensates for this. On backends with no FMA, the accurate path routed back to the fast arm, on the reasoning that all-rounded products already cancel exactly. Correct on SSE2. On WASM, with &lt;code&gt;HAS_TRUE_FMA = false&lt;/code&gt; and an engine that fuses, it produced exactly the garbage above, in the path whose documentation promises exact zeros. The 4x4 determinant and inverse minors had the same defect.&lt;/p&gt;
+&lt;p&gt;In effect, &lt;code&gt;HAS_TRUE_FMA&lt;/code&gt; could not be trusted. Not because the value was wrong, but because &lt;code&gt;bool&lt;/code&gt; has no way to say &quot;I don&#39;t know&quot;.&lt;/p&gt;
+&lt;h2 id=&quot;tribool&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#tribool&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+Tribool&lt;/h2&gt;
+&lt;p&gt;Many years ago I created the rust &lt;a rel=&quot;noopener external&quot; target=&quot;_blank&quot; href=&quot;https://crates.io/crates/tribool&quot;&gt;&lt;code&gt;tribool&lt;/code&gt;&lt;/a&gt; crate, based off of Boost&#39;s &lt;code&gt;Tribool&lt;/code&gt; class. It&#39;s basically just an enum:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;pub&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; enum&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; Tribool&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;    False&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;    True&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;    Indeterminate&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; //&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; Unknown&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;}&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;with various three-state logic methods on it. Well, what would you call the state in which we don&#39;t know if FMA is present or not, other than &lt;code&gt;Indeterminate&lt;/code&gt;?&lt;/p&gt;
+&lt;p&gt;The crate fit perfectly, so I set out and replaced &lt;code&gt;V::HAS_TRUE_FMA&lt;/code&gt; with&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt;const&lt;/span&gt;&lt;span&gt; HAS_NATIVE_FMA&lt;/span&gt;&lt;span&gt;:&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; Tribool&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Backend&lt;/th&gt;&lt;th&gt;&lt;code&gt;HAS_NATIVE_FMA&lt;/code&gt;&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;x86 SSE2 / SSE4.2&lt;/td&gt;&lt;td&gt;&lt;code&gt;False&lt;/code&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;x86 AVX2+FMA, AVX-512&lt;/td&gt;&lt;td&gt;&lt;code&gt;True&lt;/code&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;NEON (aarch64)&lt;/td&gt;&lt;td&gt;&lt;code&gt;True&lt;/code&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Scalar&lt;/td&gt;&lt;td&gt;whatever the baseline target features say&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;WASM&lt;/td&gt;&lt;td&gt;&lt;code&gt;Indeterminate&lt;/code&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;p&gt;The funny part is after the migration, no algorithm in Thermite mentions &lt;code&gt;Indeterminate&lt;/code&gt;, instead preferring one of:&lt;/p&gt;
+&lt;pre class=&quot;giallo z-l-code z-d-code&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;//&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; &amp;quot;Is FMA cheap here? i.e.: dedicated instruction&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-13 z-d-11&quot;&gt;if&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; const&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt; matches!&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;V&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span&gt;HAS_NATIVE_FMA&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; tribool&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;True&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; /*&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; ... &lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;*/&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;//&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; &amp;quot;Could two products round differently from each other?&amp;quot;&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;//&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; Note the boolean NOT&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span class=&quot;z-l-13 z-d-11&quot;&gt;if&lt;/span&gt;&lt;span class=&quot;z-l-2 z-d-4&quot;&gt; const&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span&gt; !&lt;/span&gt;&lt;span class=&quot;z-l-9 z-d-16&quot;&gt;matches!&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;V&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span&gt;HAS_NATIVE_FMA&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt; tribool&lt;/span&gt;&lt;span&gt;::&lt;/span&gt;&lt;span class=&quot;z-l-8 z-d-2&quot;&gt;False&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; /*&lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt; ... &lt;/span&gt;&lt;span class=&quot;z-l-5 z-d-7&quot;&gt;*/&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As it turns out, the old &lt;code&gt;bool&lt;/code&gt; const was close, but not exactly what was needed for
+informing algorithms about the FMA behavior. Depending on the situation we need to know if FMA is cheap (i.e., a single instruction), or just if we can rely on certain rounding behaviors or not.&lt;/p&gt;
+&lt;h2 id=&quot;composites&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#composites&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+Composites&lt;/h2&gt;
+&lt;p&gt;One more place the old &lt;code&gt;bool&lt;/code&gt; was wrong was for composite types, such as &lt;code&gt;Dual&lt;/code&gt; or &lt;code&gt;Complex&lt;/code&gt; numbers, which reported &lt;code&gt;HAS_TRUE_FMA = false&lt;/code&gt; unconditionally. However, if the question is &quot;Is &lt;code&gt;mul_adde&lt;/code&gt; faster than &lt;code&gt;a*b+c&lt;/code&gt;?&quot;, that&#39;s more interesting.&lt;/p&gt;
+&lt;p&gt;Nearly every consumer of &lt;code&gt;HAS_TRUE_FMA&lt;/code&gt; cared because of performance reasons, not because of the single rounding. Even then, making use of FMA for &lt;code&gt;Dual&lt;/code&gt;/&lt;code&gt;Complex&lt;/code&gt;&#39;s own &lt;code&gt;mul_adde&lt;/code&gt; does improve precision some. Therefore, these now simply forward the inner type&#39;s &lt;code&gt;HAS_NATIVE_FMA&lt;/code&gt;.&lt;/p&gt;
+&lt;h2 id=&quot;conclusion&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#conclusion&quot; aria-label=&quot;Permalink to this section&quot;&gt;#&lt;/a&gt;
+Conclusion&lt;/h2&gt;
+&lt;p&gt;In the end, most algorithms didn&#39;t really care, but when &lt;code&gt;!false != true&lt;/code&gt;, making use of &lt;code&gt;Tribool&lt;/code&gt; is both useful and cool.&lt;/p&gt;
+</content>
+        
+    </entry>
     <entry xml:lang="en">
         <title>Compensated Arithmetic in Core</title>
         <published>2026-09-19T00:00:00+00:00</published>
