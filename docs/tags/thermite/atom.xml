@@ -15,10 +15,10 @@
           <name>Nova</name>
         </author>
         
-        <link rel="alternate" type="text/html" href="https://novacrazy.github.io/2026-09-21-tribool-fma/"/>
-        <id>https://novacrazy.github.io/2026-09-21-tribool-fma/</id>
+        <link rel="alternate" type="text/html" href="https://novacrazy.github.io/2026-09-20-tribool-fma/"/>
+        <id>https://novacrazy.github.io/2026-09-20-tribool-fma/</id>
         
-        <content type="html" xml:base="https://novacrazy.github.io/2026-09-21-tribool-fma/">&lt;div class=&quot;olivine-admonish&quot;&gt;
+        <content type="html" xml:base="https://novacrazy.github.io/2026-09-20-tribool-fma/">&lt;div class=&quot;olivine-admonish&quot;&gt;
 TL;DR: WebAssembly is weird. Whether it has true fused multiply-add is not
 known at compile time, and basing algorithm decisions around any assumption
 has the potential to break things.

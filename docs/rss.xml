@@ -12,9 +12,9 @@
           <title>Three-State Logic for FMA</title>
           <pubDate>Sun, 20 Sep 2026 00:00:00 +0000</pubDate>
           <author>Nova</author>
-          <link>https://novacrazy.github.io/2026-09-21-tribool-fma/</link>
-          <guid>https://novacrazy.github.io/2026-09-21-tribool-fma/</guid>
-          <description xml:base="https://novacrazy.github.io/2026-09-21-tribool-fma/">&lt;div class=&quot;olivine-admonish&quot;&gt;
+          <link>https://novacrazy.github.io/2026-09-20-tribool-fma/</link>
+          <guid>https://novacrazy.github.io/2026-09-20-tribool-fma/</guid>
+          <description xml:base="https://novacrazy.github.io/2026-09-20-tribool-fma/">&lt;div class=&quot;olivine-admonish&quot;&gt;
 TL;DR: WebAssembly is weird. Whether it has true fused multiply-add is not
 known at compile time, and basing algorithm decisions around any assumption
 has the potential to break things.
