@@ -251,3 +251,126 @@ window.loadSearchAssets = (function () {
 
     update();
 })();
+
+// Like button under a post.
+//
+// The markup is the LOCAL like block in templates/content.html; the backend
+// is workers/likes. The server decides whether this visitor has liked (by
+// network, not by browser), so there is no local state to keep in sync.
+//
+// Liking is gated by Cloudflare Turnstile. Its script is a third-party load,
+// so like search it is fetched only on first contact with the button.
+(function () {
+    var root = document.querySelector(".post-like");
+    if (!root) return;
+
+    var api = root.dataset.api + "/likes";
+    var slug = root.dataset.slug;
+    var button = root.querySelector(".like-button");
+    var icon = button.querySelector("i");
+    var countEl = root.querySelector(".like-count");
+    var statusEl = root.querySelector(".like-status");
+    var challenge = root.querySelector(".like-challenge");
+
+    var liked = false;
+    var busy = false;
+    var widget = null;
+
+    function render(data) {
+        liked = data.liked;
+        button.setAttribute("aria-pressed", liked ? "true" : "false");
+        button.setAttribute("aria-label", (liked ? "Unlike" : "Like") + " this post, " + data.count + (data.count === 1 ? " like" : " likes"));
+        button.title = liked ? "You liked this post. Click to unlike." : "Like this post";
+        icon.className = (liked ? "fa-solid" : "fa-regular") + " fa-heart";
+        countEl.textContent = data.count;
+        statusEl.textContent = "";
+    }
+
+    function send(method, url, body) {
+        busy = true;
+        button.disabled = true;
+        return fetch(url, {
+            method: method,
+            headers: body ? { "Content-Type": "application/json" } : undefined,
+            body: body ? JSON.stringify(body) : undefined
+        }).then(function (res) {
+            return res.json().then(function (data) {
+                if (!res.ok) throw res.status;
+                render(data);
+            });
+        }).catch(function (status) {
+            statusEl.textContent = status === 429
+                ? "Daily like limit reached."
+                : "Could not save that, try again later.";
+        }).then(function () {
+            busy = false;
+            button.disabled = false;
+        });
+    }
+
+    // Loads once; resolves with the global `turnstile`.
+    var turnstileReady = null;
+    function loadTurnstile() {
+        if (turnstileReady) return turnstileReady;
+        turnstileReady = new Promise(function (resolve, reject) {
+            window.onLikeTurnstile = function () { resolve(window.turnstile); };
+            var s = document.createElement("script");
+            s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onLikeTurnstile";
+            s.async = true;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+        return turnstileReady;
+    }
+
+    function like() {
+        busy = true;
+        button.disabled = true;
+        loadTurnstile().then(function (ts) {
+            if (widget === null) {
+                // Invisible unless Cloudflare wants an interactive check, in
+                // which case it appears in .like-challenge below the button.
+                widget = ts.render(challenge, {
+                    sitekey: root.dataset.sitekey,
+                    action: "like",
+                    execution: "execute",
+                    appearance: "interaction-only",
+                    callback: function (token) {
+                        send("POST", api, { slug: slug, token: token }).then(function () {
+                            ts.reset(widget);
+                        });
+                    },
+                    "error-callback": function () {
+                        busy = false;
+                        button.disabled = false;
+                        statusEl.textContent = "Verification failed, try again.";
+                        ts.reset(widget);
+                    }
+                });
+            }
+            ts.execute(widget);
+        }).catch(function () {
+            busy = false;
+            button.disabled = false;
+            statusEl.textContent = "Could not load verification.";
+        });
+    }
+
+    button.addEventListener("click", function () {
+        if (busy) return;
+        if (liked) send("DELETE", api + "?slug=" + encodeURIComponent(slug));
+        else like();
+    });
+
+    // Warm the script while the pointer is on its way.
+    button.addEventListener("pointerenter", loadTurnstile, { once: true });
+    button.addEventListener("focus", loadTurnstile, { once: true });
+
+    fetch(api + "?slug=" + encodeURIComponent(slug))
+        .then(function (res) { return res.ok ? res.json() : Promise.reject(); })
+        .then(function (data) {
+            render(data);
+            root.hidden = false;
+        })
+        .catch(function () { /* API down: leave the button hidden. */ });
+})();
